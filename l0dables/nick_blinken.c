@@ -55,15 +55,14 @@ static unsigned isqrt(unsigned val) {
 }
 
 #define RAINBOW_STRIDE 9
-#define RAINBOW_BRIGHTNESS 96
 /* step is just an increasing step; target will be written to, and
  * should hold three values */
 void rainbow(int step, uint8_t *target) {
      uint8_t stage = step / RAINBOW_STRIDE;
      uint8_t waxing;
      step %= RAINBOW_STRIDE;
-     waxing = step * RAINBOW_BRIGHTNESS / RAINBOW_STRIDE; /* should give 0 to 255 */
-     target[stage%3] = (RAINBOW_BRIGHTNESS - waxing);
+     waxing = step * 255 / RAINBOW_STRIDE; /* should give 0 to 255 */
+     target[stage%3] = (255 - waxing);
      target[(stage+1)%3] = waxing;
      target[(stage+2)%3] = 0;
 }
@@ -83,10 +82,23 @@ uint8_t morse_seq[512];
 #define TYPE_CMD    0
 #define TYPE_DATA   1
 
-static void plasma(unsigned int t) {
+static const uint8_t colors[] = {
+     0, 0, 0,
+     0, 0, 255,
+     0, 255, 255,
+     0, 255, 0,
+     255, 255, 0,
+     255, 0, 0,
+     255, 0, 255,
+     255, 255, 255
+};
+
+uint8_t brightness = 8;
+
+static void step(unsigned int t) {
     int i, j;
 
-    uint8_t pattern[] = {
+    static uint8_t pattern[] = {
          0, 0, 0,
          0, 0, 0,
          0, 0, 0,
@@ -97,17 +109,35 @@ static void plasma(unsigned int t) {
          0, 0, 0
     };
 
-    for ( uint8_t i=0 ; i<5 ; i++ ) {
+    /* Rainbow LEDs 2..6 */
+    for ( i=0 ; i<5 ; i++ ) {
          rainbow(t+4-i, pattern+(i+2)*3);
     }
+
+    /* Morse LED 7 */
     pattern[21] = morse_seq[(t>>1)%morse_len];
     pattern[22] = pattern[21];
     pattern[23] = pattern[21];
-    for ( int i = 0 ; i < 3*8 ; i++ ) {
-         pattern[i] >>= 3;
+
+    /* Random blinky LEDs 0, 1 */
+    i = (t/11) % (sizeof(colors)/3);
+    pattern[0] = colors[i*3];
+    pattern[1] = colors[i*3+1];
+    pattern[2] = colors[i*3+2];
+    i = 7 - (t/7) % (sizeof(colors)/3);
+    pattern[3] = colors[i*3];
+    pattern[4] = colors[i*3+1];
+    pattern[5] = colors[i*3+2];
+
+    /* Scale brightness */
+    for ( i=0 ; i<sizeof(pattern) ; i++ ) {
+         pattern[i] = (uint8_t)((((uint16_t)pattern[i])*brightness) >> 4);
     }
+
+    /* Set LEDs */
     ws2812_sendarray(pattern, sizeof(pattern));
 
+    /* Plasma */
     lcdWrite(TYPE_CMD,0x2C);
     for (j = 0; j < RESY; j++)
         for (i = 0; i < RESX; i++) {
@@ -123,7 +153,7 @@ static void plasma(unsigned int t) {
 
 void ram(void)
 {
-    unsigned int t = 0;
+    unsigned int t = 0, tbutton=0;
     uint8_t pattern_off[] = {
          0, 0, 0,
          0, 0, 0,
@@ -134,7 +164,6 @@ void ram(void)
          0, 0, 0,
          0, 0, 0
     };
-    
 
     morse_len = 0;
     for ( char *ch = nickname ; *ch ; ch++ ) {
@@ -170,19 +199,32 @@ void ram(void)
     lcdPrint(GLOBAL(nickname));
     lcdDisplay();
 
-    // display plasma
+    // display step
     lcd_select();
     
     for (;;) {
-        plasma(t++);
+        step(t++);
         delayms(10);
-        char key = getInputRaw();
-        if (key == BTN_ENTER) {
-            lcd_deselect();
-            setTextColor(0xFF,0x00);
-            ws2812_sendarray(pattern_off, sizeof(pattern_off));
-            return;
+        switch ( getInputRaw() ) {
+        case BTN_ENTER:
+             lcd_deselect();
+             setTextColor(0xFF,0x00);
+             ws2812_sendarray(pattern_off, sizeof(pattern_off));
+             return;
+        case BTN_UP:
+             if ( t - tbutton > 10 ) {
+                  if ( brightness < 16 )
+                       brightness += 1;
+                  tbutton = t;
+             }
+             break;
+        case BTN_DOWN:
+             if ( t - tbutton > 10 ) {
+                  if ( brightness > 0 )
+                       brightness -= 1;
+                  tbutton = t;
+             }
+             break;
         }
     }
-
 }
